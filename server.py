@@ -355,6 +355,14 @@ class TaskAppHubHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_plain_text(self, status, text):
+        body = text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_html_file(self, filename):
         path = BASE_DIR / filename
         if not path.exists():
@@ -378,11 +386,8 @@ class TaskAppHubHandler(BaseHTTPRequestHandler):
         if path == "/health":
             self.send_json(HTTPStatus.OK, {"status": "healthy"})
         elif path == "/.well-known/openai-apps-challenge":
-            token = os.environ.get("OPENAI_APPS_CHALLENGE")
-            self.send_json(
-                HTTPStatus.OK,
-                {"challenge": token or "local-development-challenge"},
-            )
+            token = os.environ.get("OPENAI_APPS_CHALLENGE", "")
+            self.send_plain_text(HTTPStatus.OK, token)
         elif path in routes:
             self.send_html_file(routes[path])
         else:

@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import threading
 from urllib.error import HTTPError
@@ -52,7 +53,11 @@ def get_json(base, path):
 
 def get_text(base, path):
     with urlopen(f"{base}{path}", timeout=5) as response:
-        return response.status, response.read().decode("utf-8")
+        return (
+            response.status,
+            response.read().decode("utf-8"),
+            response.headers.get("Content-Type"),
+        )
 
 
 def post_json(base, path, payload):
@@ -85,9 +90,21 @@ def test_server_starts_and_health(live_server):
 
 
 def test_challenge_route(live_server):
-    status, body = get_json(live_server, "/.well-known/openai-apps-challenge")
+    expected = "weyl2ueRDCgpcUPa8PTYVbPDpetTeH79IQ97TvA0tn0"
+    original = os.environ.get("OPENAI_APPS_CHALLENGE")
+    os.environ["OPENAI_APPS_CHALLENGE"] = expected
+    try:
+        status, body, content_type = get_text(
+            live_server, "/.well-known/openai-apps-challenge"
+        )
+    finally:
+        if original is None:
+            os.environ.pop("OPENAI_APPS_CHALLENGE", None)
+        else:
+            os.environ["OPENAI_APPS_CHALLENGE"] = original
     assert status == 200
-    assert "challenge" in body
+    assert body == expected
+    assert content_type.startswith("text/plain")
 
 
 @pytest.mark.parametrize(
@@ -100,7 +117,7 @@ def test_challenge_route(live_server):
     ],
 )
 def test_review_pages(live_server, path, expected):
-    status, body = get_text(live_server, path)
+    status, body, _ = get_text(live_server, path)
     assert status == 200
     assert expected in body
 
