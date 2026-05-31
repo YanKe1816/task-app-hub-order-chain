@@ -9,16 +9,22 @@ import pytest
 from server import APP_SLUG, TOOL_NAME, create_server
 
 
-POSITIVE_TEXT = """PO #PO-10045
+POSITIVE_TEXT = """Purchase Order PO-10045
 Supplier: Acme Office Supplies
-Buyer: Northwind Traders
+Buyer: Northwind Retail LLC
 Items:
-- Printer Paper, SKU PAP-001, Qty 10, Unit Price 5.50
-- Ink Cartridge, SKU INK-220, Qty 2, Unit Price 39.99
+- Ergonomic Chair, SKU CH-778, Quantity 5, Unit Price 129.99
+- Standing Desk, SKU DK-221, Quantity 2, Unit Price 349.50
 Currency: USD
 Requested Delivery Date: 2026-06-15
-Ship to: 120 Market Street, San Francisco, CA 94105
+Shipping Address: 120 Market Street, Austin, TX 78701
 Notes: Deliver during business hours."""
+
+MISSING_FIELD_TEXT = """PO Number: PO-20018
+Supplier: Green Valley Foods
+Items:
+- Organic Apples, SKU APP-101, Quantity 20, Unit Price 1.25
+Currency: USD"""
 
 
 def free_port():
@@ -143,14 +149,68 @@ def test_tools_call_positive_case(live_server):
     assert content["status"] == "success"
     assert content["purchase_order_number"] == "PO-10045"
     assert content["supplier_name"] == "Acme Office Supplies"
-    assert content["buyer_name"] == "Northwind Traders"
+    assert content["buyer_name"] == "Northwind Retail LLC"
     assert len(content["items"]) == 2
-    assert content["items"][0]["quantity"] == 10.0
-    assert content["items"][0]["unit_price"] == 5.5
-    assert content["items"][0]["line_total"] == 55.0
+    assert content["items"][0] == {
+        "item_name": "Ergonomic Chair",
+        "sku": "CH-778",
+        "quantity": 5.0,
+        "unit_price": 129.99,
+        "line_total": None,
+    }
+    assert content["items"][1] == {
+        "item_name": "Standing Desk",
+        "sku": "DK-221",
+        "quantity": 2.0,
+        "unit_price": 349.5,
+        "line_total": None,
+    }
     assert content["currency"] == "USD"
     assert content["requested_delivery_date"] == "2026-06-15"
-    assert content["shipping_address"] == "120 Market Street, San Francisco, CA 94105"
+    assert content["shipping_address"] == "120 Market Street, Austin, TX 78701"
+    assert content["notes"] == "Deliver during business hours."
+    assert content["missing_fields"] == []
+    assert content["errors"] == []
+
+
+def test_sku_extraction(live_server):
+    _, content = call_tool(live_server, {"purchase_order_text": POSITIVE_TEXT})
+    assert [item["sku"] for item in content["items"]] == ["CH-778", "DK-221"]
+
+
+def test_quantity_extraction(live_server):
+    _, content = call_tool(live_server, {"purchase_order_text": POSITIVE_TEXT})
+    assert [item["quantity"] for item in content["items"]] == [5.0, 2.0]
+
+
+def test_shipping_address_extraction(live_server):
+    _, content = call_tool(live_server, {"purchase_order_text": POSITIVE_TEXT})
+    assert content["shipping_address"] == "120 Market Street, Austin, TX 78701"
+
+
+def test_missing_field_extraction_stays_successful(live_server):
+    status, content = call_tool(
+        live_server, {"purchase_order_text": MISSING_FIELD_TEXT}
+    )
+    assert status == 200
+    assert content["status"] == "success"
+    assert content["purchase_order_number"] == "PO-20018"
+    assert content["supplier_name"] == "Green Valley Foods"
+    assert content["buyer_name"] is None
+    assert content["requested_delivery_date"] is None
+    assert content["shipping_address"] is None
+    assert set(content["missing_fields"]) == {
+        "buyer_name",
+        "requested_delivery_date",
+        "shipping_address",
+    }
+    assert content["items"][0] == {
+        "item_name": "Organic Apples",
+        "sku": "APP-101",
+        "quantity": 20.0,
+        "unit_price": 1.25,
+        "line_total": None,
+    }
     assert content["errors"] == []
 
 

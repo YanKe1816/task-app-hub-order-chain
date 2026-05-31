@@ -163,31 +163,40 @@ def parse_number(value):
         return None
 
 
+def parse_item_line(line):
+    parts = [part.strip() for part in line.split(",") if part.strip()]
+    item = {
+        "item_name": parts[0] if parts else None,
+        "sku": None,
+        "quantity": None,
+        "unit_price": None,
+        "line_total": None,
+    }
+
+    field_patterns = {
+        "sku": r"^SKU\s*:?\s*(.+)$",
+        "quantity": r"^(?:Qty|Quantity)\s*:?\s*(\d+(?:\.\d+)?)$",
+        "unit_price": r"^Unit\s+Price\s*:?\s*(\d+(?:,\d{3})*(?:\.\d+)?)$",
+        "line_total": r"^Line\s+Total\s*:?\s*(\d+(?:,\d{3})*(?:\.\d+)?)$",
+    }
+    for part in parts[1:]:
+        for field, pattern in field_patterns.items():
+            match = re.match(pattern, part, re.IGNORECASE)
+            if not match:
+                continue
+            if field == "sku":
+                item[field] = match.group(1).strip()
+            else:
+                item[field] = parse_number(match.group(1))
+            break
+    return item
+
+
 def extract_items(text):
     items = []
-    item_pattern = re.compile(
-        r"^\s*[-*]\s*(?P<name>.*?)(?:,\s*SKU\s+(?P<sku>[A-Z0-9._-]+))?"
-        r"(?:,\s*Qty\s+(?P<qty>\d+(?:\.\d+)?))?"
-        r"(?:,\s*Unit\s+Price\s+(?P<price>\d+(?:,\d{3})*(?:\.\d+)?))?"
-        r"(?:,\s*Line\s+Total\s+(?P<total>\d+(?:,\d{3})*(?:\.\d+)?))?\s*$",
-        re.IGNORECASE | re.MULTILINE,
-    )
-    for match in item_pattern.finditer(text):
-        name = match.group("name").strip() if match.group("name") else None
-        quantity = parse_number(match.group("qty"))
-        unit_price = parse_number(match.group("price"))
-        line_total = parse_number(match.group("total"))
-        if line_total is None and quantity is not None and unit_price is not None:
-            line_total = round(quantity * unit_price, 2)
-        items.append(
-            {
-                "item_name": name,
-                "sku": match.group("sku"),
-                "quantity": quantity,
-                "unit_price": unit_price,
-                "line_total": line_total,
-            }
-        )
+    item_line_pattern = re.compile(r"^\s*[-*]\s*(.+?)\s*$", re.MULTILINE)
+    for match in item_line_pattern.finditer(text):
+        items.append(parse_item_line(match.group(1)))
     return items
 
 
@@ -247,7 +256,10 @@ def extract_purchase_order_fields(arguments):
         r"^\s*Requested\s+Delivery\s+Date\s*:\s*(\d{4}-\d{2}-\d{2})\s*$",
         text,
     )
-    output["shipping_address"] = first_match(r"^\s*Ship\s+to\s*:\s*(.+)$", text)
+    output["shipping_address"] = first_match(
+        r"^\s*(?:Ship\s+to|Shipping\s+Address)\s*:\s*(.+)$",
+        text,
+    )
     output["notes"] = first_match(r"^\s*Notes\s*:\s*(.+)$", text)
 
     required_fields = [
