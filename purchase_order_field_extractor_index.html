@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Purchase Order Field Extractor</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; color: #1f2933; background: #f7f9fb; }
+    main { max-width: 880px; margin: 0 auto; padding: 48px 24px; background: #ffffff; min-height: 100vh; }
+    h1, h2 { color: #102a43; }
+    code { background: #eef2f7; padding: 2px 5px; border-radius: 4px; }
+    .notice { border-left: 4px solid #2f80ed; padding: 12px 16px; background: #eef6ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Purchase Order Field Extractor</h1>
+    <p class="notice">This app extracts explicit fields from purchase order text into a deterministic structured JSON result.</p>
+    <h2>When to use it</h2>
+    <p>Use this app when a workflow has raw purchase order text and needs a read-only extraction of fields such as purchase order number, supplier, buyer, line items, quantities, prices, currency, delivery date, shipping address, and notes.</p>
+    <h2>Accepted input</h2>
+    <p>The MCP tool accepts one field: <code>purchase_order_text</code>. The value must be the raw purchase order text supplied by the user.</p>
+    <h2>Returned output</h2>
+    <p>The app returns a fixed JSON structure with status, extracted fields, item objects, missing fields, the original source text, and structured errors when input is missing, invalid, or out of scope.</p>
+    <h2>What it does not do</h2>
+    <p>This app does not create purchase orders, approve purchase orders, submit orders, validate supplier accounts, check inventory, calculate taxes, generate payments, send emails, contact suppliers, or update external systems.</p>
+  </main>
+</body>
+</html>
