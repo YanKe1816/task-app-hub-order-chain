@@ -12,6 +12,10 @@ Shared Task App Hub hosting independent Task Apps under one Python HTTP server.
 - Slug: `invoice-field-extractor`
 - MCP endpoint: `/invoice-field-extractor/mcp`
 - Tool: `invoice_field_extractor`
+- App: Shipping Delay Extractor
+- Slug: `shipping-delay-extractor`
+- MCP endpoint: `/shipping-delay-extractor/mcp`
+- Tool: `shipping_delay_extractor`
 
 ## Run locally
 
@@ -41,5 +45,10 @@ python -m pytest
 - `GET /invoice-field-extractor/privacy`
 - `GET /invoice-field-extractor/terms`
 - `GET /invoice-field-extractor/support`
+- `GET /shipping-delay-extractor`
+- `POST /shipping-delay-extractor/mcp`
+- `GET /shipping-delay-extractor/privacy`
+- `GET /shipping-delay-extractor/terms`
+- `GET /shipping-delay-extractor/support`
 
 There is no generic shared `/mcp` endpoint.

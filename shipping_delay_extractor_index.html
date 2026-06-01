@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shipping Delay Extractor</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; color: #1f2933; background: #f7f9fb; }
+    main { max-width: 880px; margin: 0 auto; padding: 48px 24px; background: #ffffff; min-height: 100vh; }
+    h1, h2 { color: #102a43; }
+    nav { margin: 0 0 24px; }
+    nav a { color: #1769aa; margin-right: 16px; }
+    code { background: #eef2f7; padding: 2px 5px; border-radius: 4px; }
+    .notice { border-left: 4px solid #2f80ed; padding: 12px 16px; background: #eef6ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Shipping Delay Extractor</h1>
+    <nav>
+      <a href="/">Return / Home</a>
+      <a href="/shipping-delay-extractor/privacy">Privacy</a>
+      <a href="/shipping-delay-extractor/terms">Terms</a>
+      <a href="/shipping-delay-extractor/support">Support</a>
+    </nav>
+    <p class="notice">This app extracts shipping delay notice fields into a deterministic structured JSON result.</p>
+    <h2>When to use it</h2>
+    <p>Use this app when an order or delivery workflow has raw shipping delay notice text and needs read-only extraction of fields such as order number, carrier, tracking number, delay reason, original estimated delivery date, new estimated delivery date, affected items, affected scope, and customer notice text.</p>
+    <h2>Accepted input</h2>
+    <p>The MCP tool accepts one field: <code>notice_text</code>. The value must be raw shipping delay notice text supplied by the user.</p>
+    <h2>Returned output</h2>
+    <p>The app returns a fixed JSON structure with status, whether the text appears to be a shipping delay notice, extracted fields, confidence, missing fields, and warnings.</p>
+    <h2>What it does not do</h2>
+    <p>This app is read-only. It does not store data, use external APIs, modify orders, contact carriers, send emails, provide compensation decisions, or provide responsibility decisions.</p>
+  </main>
+</body>
+</html>

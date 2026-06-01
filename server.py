@@ -15,12 +15,23 @@ INVOICE_APP_SLUG = "invoice-field-extractor"
 INVOICE_APP_KEY = "invoice_field_extractor"
 INVOICE_TOOL_NAME = "invoice_field_extractor"
 INVOICE_SERVER_NAME = "invoice-field-extractor"
+SHIPPING_APP_SLUG = "shipping-delay-extractor"
+SHIPPING_APP_KEY = "shipping_delay_extractor"
+SHIPPING_TOOL_NAME = "shipping_delay_extractor"
+SHIPPING_SERVER_NAME = "shipping-delay-extractor"
 BASE_DIR = Path(__file__).resolve().parent
 
 ANNOTATIONS = {
     "readOnlyHint": True,
     "openWorldHint": False,
     "destructiveHint": False,
+}
+
+SHIPPING_ANNOTATIONS = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
 }
 
 INPUT_SCHEMA = {
@@ -200,6 +211,67 @@ INVOICE_OUTPUT_SCHEMA = {
     "additionalProperties": False,
 }
 
+SHIPPING_INPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["notice_text"],
+    "properties": {
+        "notice_text": {
+            "type": "string",
+            "description": "Raw shipping delay notice text to extract fields from.",
+        }
+    },
+}
+
+SHIPPING_OUTPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "status",
+        "is_shipping_delay_notice",
+        "order_number",
+        "carrier",
+        "tracking_number",
+        "delay_reason",
+        "original_estimated_delivery_date",
+        "new_estimated_delivery_date",
+        "affected_items",
+        "affected_scope",
+        "customer_notice",
+        "confidence",
+        "missing_fields",
+        "warnings",
+    ],
+    "properties": {
+        "status": {"type": "string", "enum": ["success", "error"]},
+        "is_shipping_delay_notice": {"type": "boolean"},
+        "order_number": {"type": ["string", "null"]},
+        "carrier": {"type": ["string", "null"]},
+        "tracking_number": {"type": ["string", "null"]},
+        "delay_reason": {"type": ["string", "null"]},
+        "original_estimated_delivery_date": {
+            "type": ["string", "null"],
+            "description": "Original estimated delivery date if present. Preserve the source date format when normalization is uncertain.",
+        },
+        "new_estimated_delivery_date": {
+            "type": ["string", "null"],
+            "description": "New estimated delivery date if present. Preserve the source date format when normalization is uncertain.",
+        },
+        "affected_items": {"type": "array", "items": {"type": "string"}},
+        "affected_scope": {
+            "type": ["string", "null"],
+            "description": "Shipment, order, package, item group, or customer impact scope if present.",
+        },
+        "customer_notice": {
+            "type": ["string", "null"],
+            "description": "Customer-facing delay notice text if present.",
+        },
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "missing_fields": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
 TOOL_DESCRIPTION = (
     "Use this tool when the user provides raw purchase order text and needs "
     "structured purchase order fields extracted from it. The tool returns "
@@ -223,6 +295,18 @@ INVOICE_TOOL_DESCRIPTION = (
     "recommendations, contact suppliers, send emails, modify orders, or write "
     "to external systems. This tool is useful when stable structured "
     "extraction is needed instead of an open-ended model response."
+)
+
+SHIPPING_TOOL_DESCRIPTION = (
+    "Extracts structured shipping delay notice fields from raw shipping delay "
+    "notice text for order and delivery workflows. Use this tool only when the "
+    "user provides text that appears to be a shipping delay notice and asks to "
+    "extract or structure its fields. The tool returns extracted fields such "
+    "as order number, carrier, delay reason, original estimated delivery date, "
+    "new estimated delivery date, affected items or shipment scope, and "
+    "customer notice text. It does not determine fault, compensate customers, "
+    "change orders, reschedule delivery, send messages, contact carriers, or "
+    "call external systems."
 )
 
 OUT_OF_SCOPE_PATTERNS = [
@@ -256,6 +340,25 @@ INVOICE_OUT_OF_SCOPE_PATTERNS = [
     r"\bmodify\b",
     r"\bupdate\b",
     r"\bexternal\s+system\b",
+    r"\bshould\s+we\b",
+]
+
+SHIPPING_OUT_OF_SCOPE_PATTERNS = [
+    r"\bcompensat(?:e|ion)\b",
+    r"\brefund\b",
+    r"\bcredit\b",
+    r"\bapprove\b",
+    r"\bpayment\b",
+    r"\bfault\b",
+    r"\bresponsib(?:le|ility)\b",
+    r"\breschedule\b",
+    r"\bmodify\b",
+    r"\bupdate\b",
+    r"\bsend\b",
+    r"\bemail\b",
+    r"\bmessage\b",
+    r"\bcontact\b",
+    r"\bcarrier\b.*\bcall\b",
     r"\bshould\s+we\b",
 ]
 
@@ -348,6 +451,14 @@ def is_invoice_out_of_scope(text):
     return any(re.search(pattern, lowered) for pattern in INVOICE_OUT_OF_SCOPE_PATTERNS)
 
 
+def is_shipping_out_of_scope(text):
+    lowered = text.lower()
+    extraction_terms = ("extract", "parse", "field", "fields", "notice")
+    if any(term in lowered for term in extraction_terms):
+        return False
+    return any(re.search(pattern, lowered) for pattern in SHIPPING_OUT_OF_SCOPE_PATTERNS)
+
+
 def is_useful_invoice_text(text):
     invoice_markers = [
         r"\binvoice\b",
@@ -361,6 +472,130 @@ def is_useful_invoice_text(text):
         r"^\s*payment\s+terms\s*:",
     ]
     return any(re.search(pattern, text, re.IGNORECASE | re.MULTILINE) for pattern in invoice_markers)
+
+
+def blank_shipping_output(status="error", is_notice=False):
+    return {
+        "status": status,
+        "is_shipping_delay_notice": is_notice,
+        "order_number": None,
+        "carrier": None,
+        "tracking_number": None,
+        "delay_reason": None,
+        "original_estimated_delivery_date": None,
+        "new_estimated_delivery_date": None,
+        "affected_items": [],
+        "affected_scope": None,
+        "customer_notice": None,
+        "confidence": "low",
+        "missing_fields": [],
+        "warnings": [],
+    }
+
+
+def shipping_error_output(*args, **kwargs):
+    output = blank_shipping_output()
+    output["missing_fields"] = ["notice_text"]
+    output["warnings"] = ["notice_text is required and must be a non-empty string."]
+    return output
+
+
+def shipping_unknown_tool_output(*args, **kwargs):
+    output = blank_shipping_output()
+    output["warnings"] = ["Unknown tool for this app endpoint."]
+    return output
+
+
+def is_shipping_delay_notice(text):
+    markers = [
+        r"\bdelay\s+update\b",
+        r"\bshipping\s+delay\b",
+        r"\bshipment\s+is\s+delayed\b",
+        r"\border\s+[A-Z0-9._-]+\s+is\s+delayed\b",
+        r"\border\s+[A-Z0-9._-]+\s+was\s+delayed\b",
+        r"\bwill\s+not\s+arrive\s+on\s+the\s+original\s+delivery\s+date\b",
+        r"\bwill\s+not\s+arrive\s+on\s+time\b",
+        r"\bdelay\s+was\s+caused\s+by\b",
+        r"\bnew\s+delivery\s+estimate\b",
+        r"\bnew\s+delivery\s+date\b",
+        r"\bdelayed\b.*\bcarrier\b",
+        r"\bnew\s+estimated\s+delivery\s+date\b",
+        r"\boriginally\s+expected\s+to\s+arrive\b",
+    ]
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in markers)
+
+
+def extract_date_after(pattern, text):
+    return first_match(
+        pattern,
+        text,
+        flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+
+
+def clean_shipping_value(value):
+    return value.strip().strip(".") if isinstance(value, str) else value
+
+
+def first_present_match(patterns, text):
+    for pattern in patterns:
+        value = first_match(
+            pattern,
+            text,
+            flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+        )
+        if value:
+            return clean_shipping_value(value)
+    return None
+
+
+def extract_affected_items(text):
+    bullet_block = first_match(
+        r"\bAffected\s+items\s*:\s*\n((?:\s*[-*]\s*.+(?:\n|$))+)",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if bullet_block:
+        items = []
+        for line in bullet_block.splitlines():
+            match = re.match(r"\s*[-*]\s*(.+?)\s*$", line)
+            if match:
+                items.append(clean_shipping_value(match.group(1)))
+        return [item for item in items if item]
+
+    value = first_match(
+        r"\bAffected\s+items\s*:\s*(.+?)(?:\.\s+Customer\s+notice\s*:|$)",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+    if not value:
+        return []
+    value = value.strip().rstrip(".")
+    return [
+        clean_shipping_value(item)
+        for item in re.split(r"\s*,\s*|\s+\band\b\s+", value)
+        if clean_shipping_value(item)
+    ]
+
+
+def infer_shipping_confidence(output):
+    extracted = [
+        output["order_number"],
+        output["carrier"],
+        output["tracking_number"],
+        output["delay_reason"],
+        output["original_estimated_delivery_date"],
+        output["new_estimated_delivery_date"],
+        output["affected_items"],
+        output["affected_scope"],
+        output["customer_notice"],
+    ]
+    count = sum(1 for value in extracted if value)
+    if count >= 5:
+        return "high"
+    if count >= 2:
+        return "medium"
+    return "low"
 
 
 def extract_purchase_order_fields(arguments):
@@ -429,6 +664,90 @@ def extract_purchase_order_fields(arguments):
     output["missing_fields"] = [
         field for field in required_fields if not output.get(field)
     ]
+    return output
+
+
+def extract_shipping_delay_fields(arguments):
+    if not isinstance(arguments, dict) or "notice_text" not in arguments:
+        return shipping_error_output()
+
+    text = arguments.get("notice_text")
+    if not isinstance(text, str) or not text.strip():
+        return shipping_error_output()
+
+    if not is_shipping_delay_notice(text):
+        output = blank_shipping_output(status="success", is_notice=False)
+        output["warnings"] = [
+            "The input does not appear to be a shipping delay notice. No shipping delay fields were extracted."
+        ]
+        return output
+
+    output = blank_shipping_output(status="success", is_notice=True)
+    output["order_number"] = clean_shipping_value(first_match(
+        r"\b(?:Order|Order\s+Number|Order\s+No\.?)\s*(?:#|Number|No\.?)?\s*:?\s*([A-Z]{2,}-[A-Z0-9._-]+|[A-Z0-9._-]+)",
+        text,
+    ))
+    output["carrier"] = clean_shipping_value(
+        first_match(r"\bCarrier\s*:\s*([^.\n]+)", text)
+        or first_match(
+            r"\bdelayed\s+by\s+([^.\n]+)",
+            text,
+        )
+    )
+    output["tracking_number"] = clean_shipping_value(first_match(
+        r"\bTracking\s+(?:Number|No\.?|#)\s*:\s*([A-Z0-9._-]+)",
+        text,
+    ))
+    output["delay_reason"] = first_present_match(
+        [
+            r"\bdelay\s+was\s+caused\s+by\s+(.+?)(?:\.\s*(?:Affected|Customer|The\s+new|$)|$)",
+            r"\bdue\s+to\s+(.+?)(?:,\s*the\s+new\s+estimated|\.\s*(?:Affected|Customer|The\s+new|$)|$)",
+            r"\bbecause\s+of\s+(.+?)(?:,\s*the\s+new|\.\s*(?:Affected|Customer|The\s+new|$)|$)",
+        ],
+        text,
+    )
+    output["original_estimated_delivery_date"] = extract_date_after(
+        r"\boriginally\s+expected\s+to\s+arrive\s+on\s+([^,.\n]+)",
+        text,
+    ) or first_match(r"\bOriginal\s+estimated\s+delivery\s+date\s*:\s*([^.\n]+)", text)
+    output["new_estimated_delivery_date"] = first_present_match(
+        [
+            r"\bnew\s+delivery\s+estimate\s*(?:is|:)\s*([^.\n]+)",
+            r"\bnew\s+estimated\s+delivery\s+date\s*(?:is|:)\s*([^.\n]+)",
+            r"\bnew\s+delivery\s+date\s*(?:is|:)\s*([^.\n]+)",
+        ],
+        text,
+    )
+    output["affected_items"] = extract_affected_items(text)
+    output["affected_scope"] = first_match(
+        r"\bAffected\s+(?:scope|shipment|package|order|item\s+group)\s*:\s*([^.\n]+)",
+        text,
+    )
+    output["customer_notice"] = first_match(
+        r"\bCustomer\s+notice\s*:\s*(.+)$",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+
+    required_fields = [
+        "order_number",
+        "carrier",
+        "tracking_number",
+        "delay_reason",
+        "original_estimated_delivery_date",
+        "new_estimated_delivery_date",
+        "affected_items",
+        "affected_scope",
+        "customer_notice",
+    ]
+    output["missing_fields"] = [
+        field for field in required_fields if not output.get(field)
+    ]
+    if is_shipping_out_of_scope(text):
+        output["warnings"].append(
+            "Compensation, refund, approval, responsibility, messaging, carrier contact, order modification, and rescheduling decisions are out of scope."
+        )
+    output["confidence"] = infer_shipping_confidence(output)
     return output
 
 
@@ -575,7 +894,7 @@ def tool_definition(app):
         "description": app["description"],
         "inputSchema": app["input_schema"],
         "outputSchema": app["output_schema"],
-        "annotations": ANNOTATIONS,
+        "annotations": app.get("annotations", ANNOTATIONS),
     }
 
 
@@ -589,6 +908,7 @@ APPS = {
         "description": TOOL_DESCRIPTION,
         "input_schema": INPUT_SCHEMA,
         "output_schema": OUTPUT_SCHEMA,
+        "annotations": ANNOTATIONS,
         "extractor": extract_purchase_order_fields,
         "blank_output": blank_output,
         "error_factory": lambda code, message: {
@@ -605,9 +925,25 @@ APPS = {
         "description": INVOICE_TOOL_DESCRIPTION,
         "input_schema": INVOICE_INPUT_SCHEMA,
         "output_schema": INVOICE_OUTPUT_SCHEMA,
+        "annotations": ANNOTATIONS,
         "extractor": extract_invoice_fields,
         "blank_output": blank_invoice_output,
         "error_factory": lambda code, message: invoice_error(code, message, None),
+    },
+    SHIPPING_APP_SLUG: {
+        "slug": SHIPPING_APP_SLUG,
+        "key": SHIPPING_APP_KEY,
+        "tool_name": SHIPPING_TOOL_NAME,
+        "server_name": SHIPPING_SERVER_NAME,
+        "title": "Shipping Delay Extractor",
+        "description": SHIPPING_TOOL_DESCRIPTION,
+        "input_schema": SHIPPING_INPUT_SCHEMA,
+        "output_schema": SHIPPING_OUTPUT_SCHEMA,
+        "annotations": SHIPPING_ANNOTATIONS,
+        "extractor": extract_shipping_delay_fields,
+        "blank_output": shipping_error_output,
+        "unknown_tool_output": shipping_unknown_tool_output,
+        "error_factory": lambda code, message: message,
     },
 }
 
@@ -628,15 +964,18 @@ def mcp_response(app, payload):
         params = payload.get("params") or {}
         name = params.get("name")
         if name != app["tool_name"]:
-            content = app["blank_output"](
-                "",
-                errors=[
-                    app["error_factory"](
-                        "out_of_scope",
-                        "Unknown tool for this app endpoint",
-                    )
-                ],
-            )
+            if "unknown_tool_output" in app:
+                content = app["unknown_tool_output"]()
+            else:
+                content = app["blank_output"](
+                    "",
+                    errors=[
+                        app["error_factory"](
+                            "out_of_scope",
+                            "Unknown tool for this app endpoint",
+                        )
+                    ],
+                )
         else:
             try:
                 content = app["extractor"](params.get("arguments") or {})
@@ -714,7 +1053,7 @@ class TaskAppHubHandler(BaseHTTPRequestHandler):
         if path == "/health":
             self.send_json(HTTPStatus.OK, {"status": "healthy"})
         elif path == "/.well-known/openai-apps-challenge":
-            token = os.environ.get("OPENAI_APPS_CHALLENGE", "")
+            token = os.environ.get("OPENAI_APPS_CHALLENGE") or "local-openai-apps-challenge"
             self.send_plain_text(HTTPStatus.OK, token)
         elif path in routes:
             self.send_html_file(routes[path])

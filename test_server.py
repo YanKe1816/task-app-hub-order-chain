@@ -14,6 +14,10 @@ from server import (
     INVOICE_OUTPUT_SCHEMA,
     INVOICE_TOOL_NAME,
     OUTPUT_SCHEMA,
+    SHIPPING_ANNOTATIONS,
+    SHIPPING_APP_SLUG,
+    SHIPPING_OUTPUT_SCHEMA,
+    SHIPPING_TOOL_NAME,
     TOOL_NAME,
     create_server,
 )
@@ -50,6 +54,22 @@ Total Amount: 270.00
 Currency: USD
 Billing Address: 18 Market Street, Boston, MA 02110
 Payment Terms: Net 30"""
+
+SHIPPING_POSITIVE_TEXT = "Shipping delay notice for Order ORD-7821. Carrier: FastShip Express. Tracking Number: FSX991882. The package was originally expected to arrive on 2026-06-12, but due to severe weather at the regional hub, the new estimated delivery date is 2026-06-15. Affected items: Wireless Keyboard and USB-C Dock. Customer notice: Your shipment is delayed due to weather conditions. We apologize for the inconvenience."
+
+SHIPPING_MINIMAL_TEXT = "Order ORD-4408 is delayed. Carrier: Northline Logistics. New estimated delivery date: 2026-06-20."
+
+SHIPPING_BULLET_ITEMS_TEXT = """Shipping delay notice for Order ORD-7821.
+Carrier: FastShip Express.
+Tracking Number: FSX991882.
+Affected items:
+- Wireless Keyboard
+- USB-C Dock"""
+
+SHIPPING_SOFT_DELAY_TEXT = """Delay update:
+Order ORD-9033 will not arrive on the original delivery date.
+The delay was caused by customs inspection.
+The new delivery estimate is next Monday."""
 
 
 def free_port():
@@ -163,6 +183,22 @@ def test_challenge_route(live_server):
     assert content_type.startswith("text/plain")
 
 
+def test_challenge_route_has_plain_text_local_fallback(live_server):
+    original = os.environ.get("OPENAI_APPS_CHALLENGE")
+    os.environ.pop("OPENAI_APPS_CHALLENGE", None)
+    try:
+        status, body, content_type = get_text(
+            live_server, "/.well-known/openai-apps-challenge"
+        )
+    finally:
+        if original is not None:
+            os.environ["OPENAI_APPS_CHALLENGE"] = original
+    assert status == 200
+    assert body == "local-openai-apps-challenge"
+    assert not body.startswith("{")
+    assert content_type.startswith("text/plain")
+
+
 @pytest.mark.parametrize(
     "path, expected, expected_links",
     [
@@ -226,6 +262,43 @@ def test_challenge_route(live_server):
                 f"/{INVOICE_APP_SLUG}/terms",
             ],
         ),
+        (
+            f"/{SHIPPING_APP_SLUG}",
+            "Shipping Delay Extractor",
+            [
+                "/",
+                f"/{SHIPPING_APP_SLUG}/privacy",
+                f"/{SHIPPING_APP_SLUG}/terms",
+                f"/{SHIPPING_APP_SLUG}/support",
+            ],
+        ),
+        (
+            f"/{SHIPPING_APP_SLUG}/privacy",
+            "does not store data",
+            [
+                f"/{SHIPPING_APP_SLUG}",
+                f"/{SHIPPING_APP_SLUG}/terms",
+                f"/{SHIPPING_APP_SLUG}/support",
+            ],
+        ),
+        (
+            f"/{SHIPPING_APP_SLUG}/terms",
+            "deterministic field extraction utility",
+            [
+                f"/{SHIPPING_APP_SLUG}",
+                f"/{SHIPPING_APP_SLUG}/privacy",
+                f"/{SHIPPING_APP_SLUG}/support",
+            ],
+        ),
+        (
+            f"/{SHIPPING_APP_SLUG}/support",
+            "sidcraigau@gmail.com",
+            [
+                f"/{SHIPPING_APP_SLUG}",
+                f"/{SHIPPING_APP_SLUG}/privacy",
+                f"/{SHIPPING_APP_SLUG}/terms",
+            ],
+        ),
     ],
 )
 def test_review_pages(live_server, path, expected, expected_links):
@@ -241,6 +314,7 @@ def test_review_pages(live_server, path, expected, expected_links):
     [
         (APP_SLUG, APP_SLUG),
         (INVOICE_APP_SLUG, INVOICE_APP_SLUG),
+        (SHIPPING_APP_SLUG, SHIPPING_APP_SLUG),
     ],
 )
 def test_initialize(live_server, slug, server_name):
@@ -257,23 +331,34 @@ def test_initialize(live_server, slug, server_name):
 
 
 @pytest.mark.parametrize(
-    "slug, tool_name, title, output_schema",
+    "slug, tool_name, title, output_schema, annotations",
     [
         (
             APP_SLUG,
             TOOL_NAME,
             "Purchase Order Field Extractor",
             OUTPUT_SCHEMA,
+            ANNOTATIONS,
         ),
         (
             INVOICE_APP_SLUG,
             INVOICE_TOOL_NAME,
             "Invoice Field Extractor",
             INVOICE_OUTPUT_SCHEMA,
+            ANNOTATIONS,
+        ),
+        (
+            SHIPPING_APP_SLUG,
+            SHIPPING_TOOL_NAME,
+            "Shipping Delay Extractor",
+            SHIPPING_OUTPUT_SCHEMA,
+            SHIPPING_ANNOTATIONS,
         ),
     ],
 )
-def test_tools_list_contract(live_server, slug, tool_name, title, output_schema):
+def test_tools_list_contract(
+    live_server, slug, tool_name, title, output_schema, annotations
+):
     status, body = post_json(
         live_server,
         f"/{slug}/mcp",
@@ -289,7 +374,7 @@ def test_tools_list_contract(live_server, slug, tool_name, title, output_schema)
     assert "inputSchema" in tool
     assert "outputSchema" in tool
     assert tool["outputSchema"] == output_schema
-    assert tool["annotations"] == ANNOTATIONS
+    assert tool["annotations"] == annotations
 
 
 def test_purchase_order_tools_call_positive_case(live_server):
@@ -371,6 +456,85 @@ def test_invoice_tools_call_positive_case(live_server):
     assert content["errors"] == []
 
 
+def test_shipping_delay_tools_call_positive_case(live_server):
+    status, result = call_tool(
+        live_server,
+        SHIPPING_APP_SLUG,
+        SHIPPING_TOOL_NAME,
+        {"notice_text": SHIPPING_POSITIVE_TEXT},
+    )
+    content = result["structuredContent"]
+    assert status == 200
+    assert_value_matches_schema(content, SHIPPING_OUTPUT_SCHEMA)
+    assert content["status"] == "success"
+    assert content["is_shipping_delay_notice"] is True
+    assert content["order_number"] == "ORD-7821"
+    assert content["carrier"] == "FastShip Express"
+    assert content["tracking_number"] == "FSX991882"
+    assert content["delay_reason"] == "severe weather at the regional hub"
+    assert content["original_estimated_delivery_date"] == "2026-06-12"
+    assert content["new_estimated_delivery_date"] == "2026-06-15"
+    assert content["affected_items"] == ["Wireless Keyboard", "USB-C Dock"]
+    assert content["customer_notice"] == (
+        "Your shipment is delayed due to weather conditions. We apologize for the inconvenience."
+    )
+    assert content["confidence"] == "high"
+
+
+def test_shipping_delay_tools_call_minimal_case(live_server):
+    status, result = call_tool(
+        live_server,
+        SHIPPING_APP_SLUG,
+        SHIPPING_TOOL_NAME,
+        {"notice_text": SHIPPING_MINIMAL_TEXT},
+    )
+    content = result["structuredContent"]
+    assert status == 200
+    assert content["status"] == "success"
+    assert content["is_shipping_delay_notice"] is True
+    assert content["order_number"] == "ORD-4408"
+    assert content["carrier"] == "Northline Logistics"
+    assert content["new_estimated_delivery_date"] == "2026-06-20"
+    assert set(content["missing_fields"]) == {
+        "tracking_number",
+        "delay_reason",
+        "original_estimated_delivery_date",
+        "affected_items",
+        "affected_scope",
+        "customer_notice",
+    }
+
+
+def test_shipping_delay_extracts_multiline_affected_items(live_server):
+    status, result = call_tool(
+        live_server,
+        SHIPPING_APP_SLUG,
+        SHIPPING_TOOL_NAME,
+        {"notice_text": SHIPPING_BULLET_ITEMS_TEXT},
+    )
+    content = result["structuredContent"]
+    assert status == 200
+    assert content["status"] == "success"
+    assert content["is_shipping_delay_notice"] is True
+    assert content["affected_items"] == ["Wireless Keyboard", "USB-C Dock"]
+
+
+def test_shipping_delay_soft_delay_update_case(live_server):
+    status, result = call_tool(
+        live_server,
+        SHIPPING_APP_SLUG,
+        SHIPPING_TOOL_NAME,
+        {"notice_text": SHIPPING_SOFT_DELAY_TEXT},
+    )
+    content = result["structuredContent"]
+    assert status == 200
+    assert content["status"] == "success"
+    assert content["is_shipping_delay_notice"] is True
+    assert content["order_number"] == "ORD-9033"
+    assert content["delay_reason"] == "customs inspection"
+    assert content["new_estimated_delivery_date"] == "next Monday"
+
+
 def test_purchase_order_missing_field_extraction_stays_successful(live_server):
     status, result = call_tool(
         live_server,
@@ -399,6 +563,7 @@ def test_purchase_order_missing_field_extraction_stays_successful(live_server):
     [
         (APP_SLUG, TOOL_NAME, {"purchase_order_text": PURCHASE_ORDER_POSITIVE_TEXT}),
         (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {"invoice_text": INVOICE_POSITIVE_TEXT}),
+        (SHIPPING_APP_SLUG, SHIPPING_TOOL_NAME, {"notice_text": SHIPPING_POSITIVE_TEXT}),
     ],
 )
 def test_repeated_calls_are_stable(live_server, slug, tool_name, arguments):
@@ -414,6 +579,7 @@ def test_repeated_calls_are_stable(live_server, slug, tool_name, arguments):
     [
         (APP_SLUG, TOOL_NAME, {}, "error_type", "missing_field"),
         (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {}, "code", "missing_field"),
+        (SHIPPING_APP_SLUG, SHIPPING_TOOL_NAME, {}, None, None),
     ],
 )
 def test_missing_field_error(
@@ -423,7 +589,13 @@ def test_missing_field_error(
     content = result["structuredContent"]
     assert status == 200
     assert content["status"] == "error"
-    assert content["errors"][0][error_key] == expected_error
+    if slug == SHIPPING_APP_SLUG:
+        assert content["missing_fields"] == ["notice_text"]
+        assert content["warnings"] == [
+            "notice_text is required and must be a non-empty string."
+        ]
+    else:
+        assert content["errors"][0][error_key] == expected_error
 
 
 @pytest.mark.parametrize(
@@ -436,6 +608,9 @@ def test_missing_field_error(
         (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {"invoice_text": "   "}, "code"),
         (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {"invoice_text": 42}, "code"),
         (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {"invoice_text": "hello world"}, "code"),
+        (SHIPPING_APP_SLUG, SHIPPING_TOOL_NAME, {"notice_text": ""}, None),
+        (SHIPPING_APP_SLUG, SHIPPING_TOOL_NAME, {"notice_text": "   "}, None),
+        (SHIPPING_APP_SLUG, SHIPPING_TOOL_NAME, {"notice_text": 42}, None),
     ],
 )
 def test_invalid_value_error(live_server, slug, tool_name, arguments, error_key):
@@ -443,7 +618,13 @@ def test_invalid_value_error(live_server, slug, tool_name, arguments, error_key)
     content = result["structuredContent"]
     assert status == 200
     assert content["status"] == "error"
-    assert content["errors"][0][error_key] == "invalid_value"
+    if slug == SHIPPING_APP_SLUG:
+        assert content["missing_fields"] == ["notice_text"]
+        assert content["warnings"] == [
+            "notice_text is required and must be a non-empty string."
+        ]
+    else:
+        assert content["errors"][0][error_key] == "invalid_value"
 
 
 @pytest.mark.parametrize(
@@ -487,6 +668,82 @@ def test_out_of_scope_error(live_server, slug, tool_name, arguments, error_key):
     assert status == 200
     assert content["status"] == "error"
     assert content["errors"][0][error_key] == "out_of_scope"
+
+
+def test_shipping_delay_non_notice_returns_structured_no_extraction(live_server):
+    status, result = call_tool(
+        live_server,
+        SHIPPING_APP_SLUG,
+        SHIPPING_TOOL_NAME,
+        {"notice_text": "Please approve a payment for this vendor."},
+    )
+    content = result["structuredContent"]
+    assert status == 200
+    assert content == {
+        "status": "success",
+        "is_shipping_delay_notice": False,
+        "order_number": None,
+        "carrier": None,
+        "tracking_number": None,
+        "delay_reason": None,
+        "original_estimated_delivery_date": None,
+        "new_estimated_delivery_date": None,
+        "affected_items": [],
+        "affected_scope": None,
+        "customer_notice": None,
+        "confidence": "low",
+        "missing_fields": [],
+        "warnings": [
+            "The input does not appear to be a shipping delay notice. No shipping delay fields were extracted."
+        ],
+    }
+
+
+def test_shipping_delay_out_of_scope_compensation_warning(live_server):
+    status, result = call_tool(
+        live_server,
+        SHIPPING_APP_SLUG,
+        SHIPPING_TOOL_NAME,
+        {
+            "notice_text": "Should we compensate this customer for the late delivery? Order ORD-7821 was delayed by FastShip Express."
+        },
+    )
+    content = result["structuredContent"]
+    assert status == 200
+    assert content["status"] == "success"
+    assert content["is_shipping_delay_notice"] is True
+    assert content["order_number"] == "ORD-7821"
+    assert content["carrier"] == "FastShip Express"
+    assert content["warnings"] == [
+        "Compensation, refund, approval, responsibility, messaging, carrier contact, order modification, and rescheduling decisions are out of scope."
+    ]
+
+
+def test_shipping_delay_wrong_tool_name_returns_unknown_tool_warning(live_server):
+    status, result = call_tool(
+        live_server,
+        SHIPPING_APP_SLUG,
+        "wrong_tool",
+        {"notice_text": SHIPPING_POSITIVE_TEXT},
+    )
+    content = result["structuredContent"]
+    assert status == 200
+    assert content == {
+        "status": "error",
+        "is_shipping_delay_notice": False,
+        "order_number": None,
+        "carrier": None,
+        "tracking_number": None,
+        "delay_reason": None,
+        "original_estimated_delivery_date": None,
+        "new_estimated_delivery_date": None,
+        "affected_items": [],
+        "affected_scope": None,
+        "customer_notice": None,
+        "confidence": "low",
+        "missing_fields": [],
+        "warnings": ["Unknown tool for this app endpoint."],
+    }
 
 
 def test_cross_endpoint_tool_is_rejected(live_server):
