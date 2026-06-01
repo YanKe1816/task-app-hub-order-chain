@@ -2,12 +2,16 @@
 
 Shared Task App Hub hosting independent Task Apps under one Python HTTP server.
 
-## Current app
+## Current apps
 
 - App: Purchase Order Field Extractor
 - Slug: `purchase-order-field-extractor`
 - MCP endpoint: `/purchase-order-field-extractor/mcp`
 - Tool: `purchase_order_field_extractor`
+- App: Invoice Field Extractor
+- Slug: `invoice-field-extractor`
+- MCP endpoint: `/invoice-field-extractor/mcp`
+- Tool: `invoice_field_extractor`
 
 ## Run locally
 
@@ -32,5 +36,10 @@ python -m pytest
 - `GET /purchase-order-field-extractor/privacy`
 - `GET /purchase-order-field-extractor/terms`
 - `GET /purchase-order-field-extractor/support`
+- `GET /invoice-field-extractor`
+- `POST /invoice-field-extractor/mcp`
+- `GET /invoice-field-extractor/privacy`
+- `GET /invoice-field-extractor/terms`
+- `GET /invoice-field-extractor/support`
 
 There is no generic shared `/mcp` endpoint.

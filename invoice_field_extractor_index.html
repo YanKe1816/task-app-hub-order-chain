@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Invoice Field Extractor</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; color: #1f2933; background: #f7f9fb; }
+    main { max-width: 880px; margin: 0 auto; padding: 48px 24px; background: #ffffff; min-height: 100vh; }
+    h1, h2 { color: #102a43; }
+    nav { margin: 0 0 24px; }
+    nav a { color: #1769aa; margin-right: 16px; }
+    code { background: #eef2f7; padding: 2px 5px; border-radius: 4px; }
+    .notice { border-left: 4px solid #2f80ed; padding: 12px 16px; background: #eef6ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Invoice Field Extractor</h1>
+    <nav>
+      <a href="/invoice-field-extractor/privacy">Privacy</a>
+      <a href="/invoice-field-extractor/terms">Terms</a>
+      <a href="/invoice-field-extractor/support">Support</a>
+    </nav>
+    <p class="notice">This app extracts explicit fields from invoice text into a deterministic structured JSON result.</p>
+    <h2>When to use it</h2>
+    <p>Use this app when a workflow has raw invoice text and needs read-only extraction of fields such as invoice number, supplier, buyer, invoice dates, due date, currency, line items, subtotal, tax amount, total amount, billing address, and payment terms.</p>
+    <h2>Accepted input</h2>
+    <p>The MCP tool accepts one field: <code>invoice_text</code>. The value must be raw invoice text supplied by the user.</p>
+    <h2>Returned output</h2>
+    <p>The app returns a fixed JSON structure with status, extracted fields, line item objects, missing fields, the original source text, and structured errors when input is missing, invalid, or out of scope.</p>
+    <h2>What it does not do</h2>
+    <p>This app does not approve invoices, reject invoices, pay invoices, provide tax advice, provide accounting advice, generate bookkeeping recommendations, contact suppliers, send emails, modify orders, call external APIs, store invoice data, or write to external systems.</p>
+  </main>
+</body>
+</html>

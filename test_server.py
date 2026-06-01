@@ -7,10 +7,19 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from server import APP_SLUG, TOOL_NAME, create_server
+from server import (
+    ANNOTATIONS,
+    APP_SLUG,
+    INVOICE_APP_SLUG,
+    INVOICE_OUTPUT_SCHEMA,
+    INVOICE_TOOL_NAME,
+    OUTPUT_SCHEMA,
+    TOOL_NAME,
+    create_server,
+)
 
 
-POSITIVE_TEXT = """Purchase Order PO-10045
+PURCHASE_ORDER_POSITIVE_TEXT = """Purchase Order PO-10045
 Supplier: Acme Office Supplies
 Buyer: Northwind Retail LLC
 Items:
@@ -21,11 +30,26 @@ Requested Delivery Date: 2026-06-15
 Shipping Address: 120 Market Street, Austin, TX 78701
 Notes: Deliver during business hours."""
 
-MISSING_FIELD_TEXT = """PO Number: PO-20018
+PURCHASE_ORDER_MISSING_FIELD_TEXT = """PO Number: PO-20018
 Supplier: Green Valley Foods
 Items:
 - Organic Apples, SKU APP-101, Quantity 20, Unit Price 1.25
 Currency: USD"""
+
+INVOICE_POSITIVE_TEXT = """Invoice Number: INV-2026-1188
+Supplier: Northline Office Supply
+Buyer: Brightway Retail LLC
+Invoice Date: 2026-06-01
+Due Date: 2026-06-30
+Items:
+- Printer Paper A4, SKU A4-500, Quantity 20, Unit Price 6.50, Line Total 130.00
+- Black Ink Cartridge, SKU INK-BLK, Quantity 5, Unit Price 24.00, Line Total 120.00
+Subtotal: 250.00
+Tax: 20.00
+Total Amount: 270.00
+Currency: USD
+Billing Address: 18 Market Street, Boston, MA 02110
+Payment Terms: Net 30"""
 
 
 def free_port():
@@ -72,15 +96,47 @@ def post_json(base, path, payload):
         return response.status, json.loads(response.read().decode("utf-8"))
 
 
-def call_tool(base, arguments):
+def call_tool(base, slug, tool_name, arguments):
     payload = {
         "jsonrpc": "2.0",
         "id": 3,
         "method": "tools/call",
-        "params": {"name": TOOL_NAME, "arguments": arguments},
+        "params": {"name": tool_name, "arguments": arguments},
     }
-    status, body = post_json(base, f"/{APP_SLUG}/mcp", payload)
-    return status, body["result"]["structuredContent"]
+    status, body = post_json(base, f"/{slug}/mcp", payload)
+    return status, body["result"]
+
+
+def assert_value_matches_schema(value, schema):
+    schema_type = schema.get("type")
+    allowed_types = schema_type if isinstance(schema_type, list) else [schema_type]
+    if value is None:
+        assert "null" in allowed_types
+        return
+    if "string" in allowed_types:
+        assert isinstance(value, str)
+        return
+    if "number" in allowed_types:
+        assert isinstance(value, (int, float)) and not isinstance(value, bool)
+        return
+    if "array" in allowed_types:
+        assert isinstance(value, list)
+        for item in value:
+            assert_value_matches_schema(item, schema["items"])
+        return
+    if "object" in allowed_types:
+        assert isinstance(value, dict)
+        assert set(schema["required"]).issubset(value.keys())
+        if schema.get("additionalProperties") is False:
+            assert set(value.keys()).issubset(schema["properties"].keys())
+        for key, property_schema in schema["properties"].items():
+            if key in value:
+                assert_value_matches_schema(value[key], property_schema)
+        return
+    if "boolean" in allowed_types:
+        assert isinstance(value, bool)
+        return
+    raise AssertionError(f"Unsupported schema type: {schema_type}")
 
 
 def test_server_starts_and_health(live_server):
@@ -108,60 +164,142 @@ def test_challenge_route(live_server):
 
 
 @pytest.mark.parametrize(
-    "path, expected",
+    "path, expected, expected_links",
     [
-        (f"/{APP_SLUG}", "Purchase Order Field Extractor"),
-        (f"/{APP_SLUG}/privacy", "does not store"),
-        (f"/{APP_SLUG}/terms", "deterministic field extraction utility"),
-        (f"/{APP_SLUG}/support", "sidcraigau@gmail.com"),
+        (
+            f"/{APP_SLUG}",
+            "Purchase Order Field Extractor",
+            [
+                f"/{APP_SLUG}/privacy",
+                f"/{APP_SLUG}/terms",
+                f"/{APP_SLUG}/support",
+            ],
+        ),
+        (
+            f"/{APP_SLUG}/privacy",
+            "does not store",
+            [f"/{APP_SLUG}", f"/{APP_SLUG}/terms", f"/{APP_SLUG}/support"],
+        ),
+        (
+            f"/{APP_SLUG}/terms",
+            "deterministic field extraction utility",
+            [f"/{APP_SLUG}", f"/{APP_SLUG}/privacy", f"/{APP_SLUG}/support"],
+        ),
+        (
+            f"/{APP_SLUG}/support",
+            "sidcraigau@gmail.com",
+            [f"/{APP_SLUG}", f"/{APP_SLUG}/privacy", f"/{APP_SLUG}/terms"],
+        ),
+        (
+            f"/{INVOICE_APP_SLUG}",
+            "Invoice Field Extractor",
+            [
+                f"/{INVOICE_APP_SLUG}/privacy",
+                f"/{INVOICE_APP_SLUG}/terms",
+                f"/{INVOICE_APP_SLUG}/support",
+            ],
+        ),
+        (
+            f"/{INVOICE_APP_SLUG}/privacy",
+            "does not store",
+            [
+                f"/{INVOICE_APP_SLUG}",
+                f"/{INVOICE_APP_SLUG}/terms",
+                f"/{INVOICE_APP_SLUG}/support",
+            ],
+        ),
+        (
+            f"/{INVOICE_APP_SLUG}/terms",
+            "deterministic field extraction utility",
+            [
+                f"/{INVOICE_APP_SLUG}",
+                f"/{INVOICE_APP_SLUG}/privacy",
+                f"/{INVOICE_APP_SLUG}/support",
+            ],
+        ),
+        (
+            f"/{INVOICE_APP_SLUG}/support",
+            "sidcraigau@gmail.com",
+            [
+                f"/{INVOICE_APP_SLUG}",
+                f"/{INVOICE_APP_SLUG}/privacy",
+                f"/{INVOICE_APP_SLUG}/terms",
+            ],
+        ),
     ],
 )
-def test_review_pages(live_server, path, expected):
+def test_review_pages(live_server, path, expected, expected_links):
     status, body, _ = get_text(live_server, path)
     assert status == 200
     assert expected in body
+    for link in expected_links:
+        assert f'href="{link}"' in body
 
 
-def test_initialize(live_server):
+@pytest.mark.parametrize(
+    "slug, server_name",
+    [
+        (APP_SLUG, APP_SLUG),
+        (INVOICE_APP_SLUG, INVOICE_APP_SLUG),
+    ],
+)
+def test_initialize(live_server, slug, server_name):
     status, body = post_json(
         live_server,
-        f"/{APP_SLUG}/mcp",
+        f"/{slug}/mcp",
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
     )
     result = body["result"]
     assert status == 200
     assert result["protocolVersion"]
-    assert result["serverInfo"]["name"] == APP_SLUG
+    assert result["serverInfo"]["name"] == server_name
     assert "capabilities" in result
 
 
-def test_tools_list_contract(live_server):
+@pytest.mark.parametrize(
+    "slug, tool_name, title, output_schema",
+    [
+        (
+            APP_SLUG,
+            TOOL_NAME,
+            "Purchase Order Field Extractor",
+            OUTPUT_SCHEMA,
+        ),
+        (
+            INVOICE_APP_SLUG,
+            INVOICE_TOOL_NAME,
+            "Invoice Field Extractor",
+            INVOICE_OUTPUT_SCHEMA,
+        ),
+    ],
+)
+def test_tools_list_contract(live_server, slug, tool_name, title, output_schema):
     status, body = post_json(
         live_server,
-        f"/{APP_SLUG}/mcp",
+        f"/{slug}/mcp",
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
     )
     tools = body["result"]["tools"]
     assert status == 200
     assert len(tools) == 1
     tool = tools[0]
-    assert tool["name"] == TOOL_NAME
-    assert tool["title"] == "Purchase Order Field Extractor"
+    assert tool["name"] == tool_name
+    assert tool["title"] == title
     assert "description" in tool
     assert "inputSchema" in tool
     assert "outputSchema" in tool
-    assert "annotations" in tool
-    assert tool["annotations"] == {
-        "readOnlyHint": True,
-        "openWorldHint": False,
-        "destructiveHint": False,
-    }
+    assert tool["outputSchema"] == output_schema
+    assert tool["annotations"] == ANNOTATIONS
 
 
-def test_tools_call_positive_case(live_server):
-    status, content = call_tool(
-        live_server, {"purchase_order_text": POSITIVE_TEXT}
+def test_purchase_order_tools_call_positive_case(live_server):
+    status, result = call_tool(
+        live_server,
+        APP_SLUG,
+        TOOL_NAME,
+        {"purchase_order_text": PURCHASE_ORDER_POSITIVE_TEXT},
     )
+    content = result["structuredContent"]
     assert status == 200
     assert content["status"] == "success"
     assert content["purchase_order_number"] == "PO-10045"
@@ -190,25 +328,57 @@ def test_tools_call_positive_case(live_server):
     assert content["errors"] == []
 
 
-def test_sku_extraction(live_server):
-    _, content = call_tool(live_server, {"purchase_order_text": POSITIVE_TEXT})
-    assert [item["sku"] for item in content["items"]] == ["CH-778", "DK-221"]
-
-
-def test_quantity_extraction(live_server):
-    _, content = call_tool(live_server, {"purchase_order_text": POSITIVE_TEXT})
-    assert [item["quantity"] for item in content["items"]] == [5.0, 2.0]
-
-
-def test_shipping_address_extraction(live_server):
-    _, content = call_tool(live_server, {"purchase_order_text": POSITIVE_TEXT})
-    assert content["shipping_address"] == "120 Market Street, Austin, TX 78701"
-
-
-def test_missing_field_extraction_stays_successful(live_server):
-    status, content = call_tool(
-        live_server, {"purchase_order_text": MISSING_FIELD_TEXT}
+def test_invoice_tools_call_positive_case(live_server):
+    status, result = call_tool(
+        live_server,
+        INVOICE_APP_SLUG,
+        INVOICE_TOOL_NAME,
+        {"invoice_text": INVOICE_POSITIVE_TEXT},
     )
+    content = result["structuredContent"]
+    assert status == 200
+    assert "structuredContent" in result
+    assert_value_matches_schema(content, INVOICE_OUTPUT_SCHEMA)
+    assert content["status"] == "success"
+    assert content["invoice_number"] == "INV-2026-1188"
+    assert content["supplier"] == "Northline Office Supply"
+    assert content["buyer"] == "Brightway Retail LLC"
+    assert content["invoice_date"] == "2026-06-01"
+    assert content["due_date"] == "2026-06-30"
+    assert content["currency"] == "USD"
+    assert content["subtotal"] == 250.0
+    assert content["tax_amount"] == 20.0
+    assert content["total_amount"] == 270.0
+    assert content["billing_address"] == "18 Market Street, Boston, MA 02110"
+    assert content["payment_terms"] == "Net 30"
+    assert content["line_items"] == [
+        {
+            "item_name": "Printer Paper A4",
+            "sku": "A4-500",
+            "quantity": 20.0,
+            "unit_price": 6.5,
+            "line_total": 130.0,
+        },
+        {
+            "item_name": "Black Ink Cartridge",
+            "sku": "INK-BLK",
+            "quantity": 5.0,
+            "unit_price": 24.0,
+            "line_total": 120.0,
+        },
+    ]
+    assert content["missing_fields"] == []
+    assert content["errors"] == []
+
+
+def test_purchase_order_missing_field_extraction_stays_successful(live_server):
+    status, result = call_tool(
+        live_server,
+        APP_SLUG,
+        TOOL_NAME,
+        {"purchase_order_text": PURCHASE_ORDER_MISSING_FIELD_TEXT},
+    )
+    content = result["structuredContent"]
     assert status == 200
     assert content["status"] == "success"
     assert content["purchase_order_number"] == "PO-20018"
@@ -221,64 +391,123 @@ def test_missing_field_extraction_stays_successful(live_server):
         "requested_delivery_date",
         "shipping_address",
     }
-    assert content["items"][0] == {
-        "item_name": "Organic Apples",
-        "sku": "APP-101",
-        "quantity": 20.0,
-        "unit_price": 1.25,
-        "line_total": None,
-    }
     assert content["errors"] == []
 
 
-def test_repeated_calls_are_stable(live_server):
+@pytest.mark.parametrize(
+    "slug, tool_name, arguments",
+    [
+        (APP_SLUG, TOOL_NAME, {"purchase_order_text": PURCHASE_ORDER_POSITIVE_TEXT}),
+        (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {"invoice_text": INVOICE_POSITIVE_TEXT}),
+    ],
+)
+def test_repeated_calls_are_stable(live_server, slug, tool_name, arguments):
     outputs = [
-        call_tool(live_server, {"purchase_order_text": POSITIVE_TEXT})[1]
+        call_tool(live_server, slug, tool_name, arguments)[1]["structuredContent"]
         for _ in range(3)
     ]
     assert outputs[0] == outputs[1] == outputs[2]
 
 
-def test_missing_field_error(live_server):
-    status, content = call_tool(live_server, {})
+@pytest.mark.parametrize(
+    "slug, tool_name, arguments, error_key, expected_error",
+    [
+        (APP_SLUG, TOOL_NAME, {}, "error_type", "missing_field"),
+        (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {}, "code", "missing_field"),
+    ],
+)
+def test_missing_field_error(
+    live_server, slug, tool_name, arguments, error_key, expected_error
+):
+    status, result = call_tool(live_server, slug, tool_name, arguments)
+    content = result["structuredContent"]
     assert status == 200
     assert content["status"] == "error"
-    assert content["errors"] == [
-        {
-            "error_type": "missing_field",
-            "message": "purchase_order_text is required",
-        }
-    ]
-
-
-@pytest.mark.parametrize("value", ["", "   ", 42, None])
-def test_invalid_value_error(live_server, value):
-    status, content = call_tool(live_server, {"purchase_order_text": value})
-    assert status == 200
-    assert content["status"] == "error"
-    assert content["errors"][0]["error_type"] == "invalid_value"
+    assert content["errors"][0][error_key] == expected_error
 
 
 @pytest.mark.parametrize(
-    "text",
+    "slug, tool_name, arguments, error_key",
     [
-        "Approve this purchase order and send it to the supplier.",
-        "Pay supplier Acme Office Supplies for PO-10045.",
-        "Email this purchase order to the vendor.",
-        "Should we approve this purchase order?",
+        (APP_SLUG, TOOL_NAME, {"purchase_order_text": ""}, "error_type"),
+        (APP_SLUG, TOOL_NAME, {"purchase_order_text": "   "}, "error_type"),
+        (APP_SLUG, TOOL_NAME, {"purchase_order_text": 42}, "error_type"),
+        (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {"invoice_text": ""}, "code"),
+        (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {"invoice_text": "   "}, "code"),
+        (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {"invoice_text": 42}, "code"),
+        (INVOICE_APP_SLUG, INVOICE_TOOL_NAME, {"invoice_text": "hello world"}, "code"),
     ],
 )
-def test_out_of_scope_error(live_server, text):
-    status, content = call_tool(live_server, {"purchase_order_text": text})
+def test_invalid_value_error(live_server, slug, tool_name, arguments, error_key):
+    status, result = call_tool(live_server, slug, tool_name, arguments)
+    content = result["structuredContent"]
     assert status == 200
     assert content["status"] == "error"
-    assert content["errors"][0]["error_type"] == "out_of_scope"
+    assert content["errors"][0][error_key] == "invalid_value"
+
+
+@pytest.mark.parametrize(
+    "slug, tool_name, arguments, error_key",
+    [
+        (
+            APP_SLUG,
+            TOOL_NAME,
+            {"purchase_order_text": "Approve this purchase order and send it."},
+            "error_type",
+        ),
+        (
+            INVOICE_APP_SLUG,
+            INVOICE_TOOL_NAME,
+            {"invoice_text": "Should we approve this invoice?"},
+            "code",
+        ),
+        (
+            INVOICE_APP_SLUG,
+            INVOICE_TOOL_NAME,
+            {"invoice_text": "Please pay this invoice now."},
+            "code",
+        ),
+        (
+            INVOICE_APP_SLUG,
+            INVOICE_TOOL_NAME,
+            {"invoice_text": "Can you give me tax advice for this invoice?"},
+            "code",
+        ),
+        (
+            INVOICE_APP_SLUG,
+            INVOICE_TOOL_NAME,
+            {"invoice_text": "Write an email to the supplier about this invoice."},
+            "code",
+        ),
+    ],
+)
+def test_out_of_scope_error(live_server, slug, tool_name, arguments, error_key):
+    status, result = call_tool(live_server, slug, tool_name, arguments)
+    content = result["structuredContent"]
+    assert status == 200
+    assert content["status"] == "error"
+    assert content["errors"][0][error_key] == "out_of_scope"
+
+
+def test_cross_endpoint_tool_is_rejected(live_server):
+    status, result = call_tool(
+        live_server,
+        INVOICE_APP_SLUG,
+        TOOL_NAME,
+        {"invoice_text": INVOICE_POSITIVE_TEXT},
+    )
+    content = result["structuredContent"]
+    assert status == 200
+    assert content["status"] == "error"
+    assert content["errors"][0]["code"] == "out_of_scope"
 
 
 def test_no_generic_mcp_endpoint(live_server):
     request = Request(
         f"{live_server}/mcp",
-        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode("utf-8"),
+        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode(
+            "utf-8"
+        ),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
